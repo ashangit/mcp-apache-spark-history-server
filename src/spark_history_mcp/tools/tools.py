@@ -1507,13 +1507,3 @@ def list_events(
     query = f"pod_name:*{job_id}* "
 
     return Datadog().list_events(query, _from=start_time, to=end_time)
-
-
-# @mcp.tool()
-def get_cpu_metrics_job(job_id: str):
-    pass
-
-
-# @mcp.tool()
-def get_memory_metrics_job(job_id: str):
-    pass
