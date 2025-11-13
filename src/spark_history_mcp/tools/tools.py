@@ -1484,17 +1484,29 @@ def list_events(
     start_time: datetime,
     end_time: Optional[datetime] = None,
 ) -> list[EventDD]:
+    """
+    Get Datadog events for a Spark job execution.
+
+    Retrieves events from DataDog matching the given job ID and time range.
+    Events provide information about key lifecycle events during job execution.
+
+    For ex. it provides information on the lifecycle of the kubernetes pod on which spark runs
+    or on oom kill faced by the pod
+
+    Args:
+        job_id: The mortar/yoshi job ID to get events for
+        start_time: Start time to get events from
+        end_time: Optional end time to get events until (defaults to current time)
+
+    Returns:
+        List[EventDD]: List of matching events from DataDog for the specified job
+    """
     if end_time is None:
         end_time = datetime.now()
 
     query = f"pod_name:*{job_id}* "
 
     return Datadog().list_events(query, _from=start_time, to=end_time)
-
-# @mcp.tool()
-def get_oom_metrics_job(job_id: str):
-    # oom_kill.oom_process.count
-    pass
 
 
 # @mcp.tool()
