@@ -1,9 +1,12 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import cached_property
 from threading import Lock
 
 from datadog_api_client import Configuration, ApiClient
+from datadog_api_client.v2.api.events_api import EventsApi
 from datadog_api_client.v2.api.logs_api import LogsApi
+from datadog_api_client.v2.model.events_sort import EventsSort
 from datadog_api_client.v2.model.logs_list_request import LogsListRequest
 from datadog_api_client.v2.model.logs_list_request_page import LogsListRequestPage
 from datadog_api_client.v2.model.logs_query_filter import LogsQueryFilter
@@ -13,6 +16,7 @@ from pydantic import BaseModel, Field
 from spark_history_mcp.common.variable import (
     POD_NAMESPACE,
     POD_SERVICE_ACCOUNT,
+    DD_ENV,
 )
 from spark_history_mcp.common.vault import VaultApi
 
@@ -25,9 +29,18 @@ class LogDD(BaseModel):
     timestamp: datetime = Field(description="Timestamp when the log has been emitted")
     message: str = Field(description="Log message")
     status: str = Field(description="Log level")
-    host: str = Field(description="Host where the logs has been emitted")
-    service: str = Field(description="Service where the logs has been emitted")
-    pod_name: str = Field(description="Pod name where the logs has been emitted")
+    host: str = Field(description="Host where the log has been emitted")
+    service: str = Field(description="Service where the log has been emitted")
+    pod_name: str = Field(description="Pod name where the log has been emitted")
+    url: str = Field(description="URL to the individual log")
+
+
+class EventDD(BaseModel):
+    timestamp: datetime = Field(description="Timestamp when the event has been emitted")
+    message: str = Field(description="Log message")
+    pod_name: str = Field(description="Pod name where the event has been emitted")
+    source: str = Field(description="Source of the event")
+    url: str = Field(description="URL to the individual event")
 
 
 class SingletonMeta(type):
@@ -88,7 +101,15 @@ class Datadog(metaclass=SingletonMeta):
         self.configuration.enable_retry = True
         self.configuration.max_retries = 5
 
-    def get_logs(
+    @cached_property
+    def base_url(self) -> str:
+        base_url = "https://app.datadoghq.com"
+        if DD_ENV == "staging":
+            base_url = "https://ddstaging.datadoghq.com"
+
+        return base_url
+
+    def list_logs(
         self, index_names: list[str], query: str, _from: datetime, to: datetime
     ) -> list[LogDD]:
         with ApiClient(self.configuration) as api_client:
@@ -125,6 +146,7 @@ class Datadog(metaclass=SingletonMeta):
                             host=log.attributes.get("host", ""),
                             service=log.attributes.get("service", ""),
                             pod_name=pod_name,
+                            url=f"{self.base_url}/logs?event={log.id}",
                         )
                     )
 
@@ -134,4 +156,54 @@ class Datadog(metaclass=SingletonMeta):
                 return logs
             except Exception as e:
                 logger.error(f"Error retrieving logs: {e}")
+                raise
+
+    def list_events(self, query: str, _from: datetime, to: datetime) -> list[EventDD]:
+        with ApiClient(self.configuration) as api_client:
+            events_api = EventsApi(api_client)
+
+            try:
+                events = []
+
+                # Use pagination
+                for event in events_api.list_events_with_pagination(
+                    filter_query=query,
+                    filter_from=_from.isoformat(),
+                    filter_to=to.isoformat(),
+                    sort=EventsSort.TIMESTAMP_ASCENDING,
+                    page_limit=self.LIMIT_PER_QUERY_LOGS,
+                ):
+                    pod_name = next(
+                        (
+                            tag
+                            for tag in event.attributes.get("tags", [])
+                            if tag.startswith("pod_name:")
+                        ),
+                        None,
+                    ).replace("pod_name:", "")
+                    source = next(
+                        (
+                            tag
+                            for tag in event.attributes.get("tags", [])
+                            if tag.startswith("source:")
+                        ),
+                        None,
+                    ).replace("source:", "")
+                    event_data = EventDD(
+                        timestamp=event.attributes.get("timestamp", None),
+                        message=event.attributes.get("message", None),
+                        pod_name=pod_name,
+                        source=source,
+                        url=f"{self.base_url}/event/explorer?event={event.id}",
+                    )
+
+                    events.append(event_data)
+
+                    if len(events) >= self.MAX_RETURN_LOGS:
+                        break
+
+                return events
+
+            except Exception as e:
+                logger.error(f"Error listing events (v2): {e}")
                 raise

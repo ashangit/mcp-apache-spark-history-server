@@ -21,7 +21,7 @@ from spark_history_mcp.models.spark_types import (
     StageStatus,
     TaskMetricDistributions,
 )
-from ..common.datadog import Datadog, LogDD
+from ..common.datadog import Datadog, LogDD, EventDD
 from ..common.yoshi import Yoshi
 
 from ..utils.utils import parallel_execute
@@ -1353,7 +1353,7 @@ def get_spark_job_logs(
     if status is not None:
         query += f" status:{status}"
 
-    return Datadog().get_logs(
+    return Datadog().list_logs(
         index_names=["data-eng", "dd-events"],
         query=query,
         _from=start_time,
@@ -1389,7 +1389,7 @@ def get_operator_logs(
     if status is not None:
         query += f" status:{status}"
 
-    return Datadog().get_logs(
+    return Datadog().list_logs(
         index_names=["mortar"],
         query=query,
         _from=start_time,
@@ -1429,7 +1429,7 @@ def get_workflow_logs(
     if status is not None:
         query += f" status:{status}"
 
-    return Datadog().get_logs(
+    return Datadog().list_logs(
         index_names=["mortar"],
         query=query,
         _from=start_time,
@@ -1471,12 +1471,25 @@ def get_admission_logs(
     if status is not None:
         query += f" status:{status}"
 
-    return Datadog().get_logs(
+    return Datadog().list_logs(
         index_names=["mortar"],
         query=query,
         _from=start_time,
         to=end_time,
     )
+
+@mcp.tool()
+def list_events(
+    job_id: str,
+    start_time: datetime,
+    end_time: Optional[datetime] = None,
+) -> list[EventDD]:
+    if end_time is None:
+        end_time = datetime.now()
+
+    query = f"pod_name:*{job_id}* "
+
+    return Datadog().list_events(query, _from=start_time, to=end_time)
 
 # @mcp.tool()
 def get_oom_metrics_job(job_id: str):
