@@ -27,7 +27,7 @@ class S3Client:
 
         shs_url_prefix =f"https://spark-history-server.{datacenter}"
         if POD_NAME:
-            shs_url_prefix = "https://spark-history-server.spark.all-clusters.local-dc.fabric.dog:5554"
+            shs_url_prefix = "http://spark-history-server.spark.all-clusters.local-dc.fabric.dog:5555"
         self.shs_url_prefix = shs_url_prefix
 
     def list_contents_by_prefix(self, prefix, bucket):
