@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 import heapq
 import logging
@@ -137,7 +136,6 @@ def list_applications(
 
         return all_apps
 
-
 @mcp.tool()
 def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInfo:
     """
@@ -176,6 +174,8 @@ def list_jobs(
     Returns:
         List of JobData objects for the application
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -208,6 +208,8 @@ def list_slowest_jobs(
     Returns:
         List of JobData objects for the slowest jobs, or empty list if no jobs found
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -254,6 +256,8 @@ def list_stages(
     Returns:
         List of StageData objects for the application
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -290,6 +294,8 @@ def list_slowest_stages(
     Returns:
         List of StageData objects for the slowest stages, or empty list if no stages found
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -333,6 +339,8 @@ def get_stage(
     Returns:
         StageData object containing stage information
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -393,6 +401,8 @@ def get_environment(app_id: str, server: Optional[str] = None):
     Returns:
         ApplicationEnvironmentInfo object containing environment details
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -417,6 +427,8 @@ def list_executors(
     Returns:
         List of ExecutorSummary objects containing executor information
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -442,6 +454,8 @@ def get_executor(app_id: str, executor_id: str, server: Optional[str] = None):
     Returns:
         ExecutorSummary object containing executor details or None if not found
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -470,6 +484,8 @@ def get_executor_summary(app_id: str, server: Optional[str] = None):
     Returns:
         Dictionary containing aggregated executor metrics
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -495,6 +511,10 @@ def compare_job_environments(
     Returns:
         Dictionary containing configuration differences and similarities
     """
+    index_spark_event_logs(app_id1)
+    index_spark_event_logs(app_id2)
+
+
     ctx = mcp.get_context()
     client1 = get_client_or_default(ctx, server, app_id1)
     client2 = get_client_or_default(ctx, server, app_id2)
@@ -610,6 +630,9 @@ def compare_job_performance(
     Returns:
         Dictionary containing detailed performance comparison
     """
+    index_spark_event_logs(app_id1)
+    index_spark_event_logs(app_id2)
+
     ctx = mcp.get_context()
     client1 = get_client_or_default(ctx, server, app_id1)
     client2 = get_client_or_default(ctx, server, app_id2)
@@ -770,6 +793,9 @@ def compare_sql_execution_plans(
     Returns:
         Dictionary containing SQL execution plan comparison
     """
+    index_spark_event_logs(app_id1)
+    index_spark_event_logs(app_id2)
+
     ctx = mcp.get_context()
     client1 = get_client_or_default(ctx, server, app_id1)
     client2 = get_client_or_default(ctx, server, app_id2)
@@ -891,6 +917,8 @@ def get_stage_task_summary(
     Returns:
         TaskMetricDistributions object containing metric distributions
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -951,6 +979,8 @@ def list_slowest_sql_queries(
     Returns:
         List of SqlQuerySummary objects for the slowest queries
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -1044,6 +1074,8 @@ def get_job_bottlenecks(
     Returns:
         Dictionary containing identified bottlenecks and recommendations
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
@@ -1185,10 +1217,12 @@ def get_resource_usage_timeline(
     Returns:
         Dictionary containing timeline of resource usage
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
-    # Get application info
+   # Get application info
     app = client.get_application(app_id)
 
     # Get all executors

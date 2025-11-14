@@ -10,22 +10,6 @@ from spark_history_mcp.common.variable import POD_NAME, DD_DATACENTER
 logger = logging.getLogger(__name__)
 
 
-# def index_spark_event_logs(func):
-#     @wraps(func)  # Preserves original function's name and docstring
-#     def wrapper(*args, **kwargs):
-#         print(args)
-#         print(kwargs)
-#         s3_client = S3Client(datacenter=DD_DATACENTER)
-#         if not s3_client.is_spark_event_logs_already_indexed(app_id):
-#             try:
-#                 s3_client.copy_spark_events_logs(app_id)
-#             except Exception as e:
-#                 raise Exception(
-#                     f"Failed to copy events logs for app_id {app_id}: {e}"
-#                 ) from e
-#         return func(*args, **kwargs)
-#
-#     return wrapper
 def index_spark_event_logs(app_id: str):
     logger.info(f"Indexing spark event logs for app_id {app_id}")
     s3_client = S3Client(datacenter=DD_DATACENTER)
