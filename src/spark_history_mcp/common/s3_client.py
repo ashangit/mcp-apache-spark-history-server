@@ -6,6 +6,7 @@ import requests
 
 from spark_history_mcp.common.decorators import backoff_retry
 from spark_history_mcp.common.variable import POD_NAME, DD_DATACENTER
+from spark_history_mcp.config.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,8 @@ class S3Client:
         self.bucket_name = f"dd-spark-history-server-{datacenter.replace(".", "-")}" # e.g dd-spark-history-server-us1-staging-dog
         self.dst_prefix = "indexed_spark_logs/"
 
-        shs_url_prefix =f"https://spark-history-server.{datacenter}"
-        if POD_NAME:
-            shs_url_prefix = "http://spark-history-server.spark.all-clusters.local-dc.fabric.dog:5555"
-        self.shs_url_prefix = shs_url_prefix
+        config = Config.from_file("config.yaml")
+        self.shs_url_prefix = config.servers.get("local").url
 
     def list_contents_by_prefix(self, prefix, bucket):
         b = self.client.Bucket(bucket)
