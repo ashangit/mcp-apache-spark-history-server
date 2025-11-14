@@ -158,7 +158,7 @@ def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInf
     client = get_client_or_default(ctx, server, app_id)
 
     # Index spark event logs if missing
-    index_spark_event_logs(datacenter=DATACENTER)
+    index_spark_event_logs(datacenter=DATACENTER, app_id=app_id)
 
     return client.get_application(app_id)
 

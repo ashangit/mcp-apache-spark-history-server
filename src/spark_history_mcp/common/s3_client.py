@@ -6,7 +6,7 @@ import requests
 from spark_history_mcp.common.decorators import backoff_retry
 from spark_history_mcp.common.variable import POD_NAME
 
-def index_spark_event_logs(datacenter:str):
+def index_spark_event_logs(datacenter:str, app_id: str):
     s3_client = S3Client(datacenter=datacenter)
     if not s3_client.is_spark_event_logs_already_indexed(app_id):
         try:
