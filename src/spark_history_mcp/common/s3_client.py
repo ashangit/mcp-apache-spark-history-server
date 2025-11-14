@@ -1,13 +1,34 @@
+import logging
 import os
 
 import boto3
 import requests
 
 from spark_history_mcp.common.decorators import backoff_retry
-from spark_history_mcp.common.variable import POD_NAME
+from spark_history_mcp.common.variable import POD_NAME, DD_DATACENTER
 
-def index_spark_event_logs(datacenter:str, app_id: str):
-    s3_client = S3Client(datacenter=datacenter)
+logger = logging.getLogger(__name__)
+
+
+# def index_spark_event_logs(func):
+#     @wraps(func)  # Preserves original function's name and docstring
+#     def wrapper(*args, **kwargs):
+#         print(args)
+#         print(kwargs)
+#         s3_client = S3Client(datacenter=DD_DATACENTER)
+#         if not s3_client.is_spark_event_logs_already_indexed(app_id):
+#             try:
+#                 s3_client.copy_spark_events_logs(app_id)
+#             except Exception as e:
+#                 raise Exception(
+#                     f"Failed to copy events logs for app_id {app_id}: {e}"
+#                 ) from e
+#         return func(*args, **kwargs)
+#
+#     return wrapper
+def index_spark_event_logs(app_id: str):
+    logger.info(f"Indexing spark event logs for app_id {app_id}")
+    s3_client = S3Client(datacenter=DD_DATACENTER)
     if not s3_client.is_spark_event_logs_already_indexed(app_id):
         try:
             s3_client.copy_spark_events_logs(app_id)
@@ -39,18 +60,21 @@ class S3Client:
 
         return False
 
-    @backoff_retry(retries=5, delay=2)
+    @backoff_retry(retries=10, delay=2)
     def poll_spark_history_server(self, spark_app_id: str) -> Exception | None:
-        print("entered function")
+        logger.info(f"Poll spark history server for job availability {spark_app_id}")
         full_url = f"{self.shs_url_prefix}/history/{spark_app_id}/jobs/"
         try:
            resp = requests.get(full_url, timeout=3)
         except requests.exceptions.Timeout:
+            logger.error(f"Spark History Server request timed out: {full_url}")
             raise Exception(f"Spark History Server request timed out: {full_url}", 408)
-        except requests.exceptions.ConnectionError:
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Spark History Server unavailable, please try again shortly: {full_url}: {e}")
             raise Exception("Spark History Server unavailable, please try again shortly", 503)
 
         if resp.status_code == 404:
+            logger.error(f"Spark app {spark_app_id} not found")
             raise Exception(f"Spark History Server didn't finish parsing event logs: {full_url}", 404)
 
         return None
@@ -63,6 +87,7 @@ class S3Client:
             raise Exception(f"Logs for {spark_app_id} not found. Is the job older than one month?", 404)
 
         # copy log file to new prefix
+        logger.info(f"Indexing spark event logs for app_id {spark_app_id}")
         src_key = base_logs[0]
         dst_key = self.dst_prefix + os.path.basename(src_key)
         copy_source = {

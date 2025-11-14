@@ -22,14 +22,13 @@ from spark_history_mcp.models.spark_types import (
     TaskMetricDistributions,
 )
 from ..common.datadog import Datadog, LogDD, EventDD
+from ..common.variable import DD_DATACENTER
 from ..common.yoshi import Yoshi
 from ..common.s3_client import index_spark_event_logs
 
 from ..utils.utils import parallel_execute
 
 logger = logging.getLogger(__name__)
-
-DATACENTER = os.environ.get("DD_DATACENTER", "us1.staging.dog")
 
 
 def get_client_or_default(
@@ -154,11 +153,10 @@ def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInf
     Returns:
         ApplicationInfo object containing application details
     """
+    index_spark_event_logs(app_id)
+
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
-
-    # Index spark event logs if missing
-    index_spark_event_logs(datacenter=DATACENTER, app_id=app_id)
 
     return client.get_application(app_id)
 
@@ -1320,7 +1318,7 @@ def get_job_definition(job_id: str) -> Job:
     Returns:
         Job: Job definition
     """
-    return Yoshi(DATACENTER).get_job_definition(job_id)
+    return Yoshi(DD_DATACENTER).get_job_definition(job_id)
 
 
 # TODO see to add pagination on mcp
