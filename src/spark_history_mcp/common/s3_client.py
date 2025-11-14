@@ -3,8 +3,16 @@ import os
 import boto3
 import requests
 
-from src.spark_history_mcp.common.decorators import backoff_retry
-from src.spark_history_mcp.common.variable import POD_NAME
+from spark_history_mcp.common.decorators import backoff_retry
+from spark_history_mcp.common.variable import POD_NAME
+
+def index_spark_event_logs(datacenter:str):
+    s3_client = S3Client(datacenter=datacenter)
+    if not s3_client.is_spark_event_logs_already_indexed(app_id):
+        try:
+            s3_client.copy_spark_events_logs(app_id)
+        except Exception as e:
+            raise Exception(f"Failed to copy events logs for app_id {app_id}: {e}") from e
 
 
 class S3Client:
