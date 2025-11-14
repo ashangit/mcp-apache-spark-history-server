@@ -23,7 +23,10 @@ from spark_history_mcp.models.spark_types import (
     TaskStatus,
     ThreadStackTrace,
     VersionInfo,
+    ApplicationInfoEnriched,
 )
+
+from spark_history_mcp.common.utils import get_spark_history_server_url_for_user
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -195,7 +198,7 @@ class SparkRestClient:
         min_end_date: Optional[str] = None,
         max_end_date: Optional[str] = None,
         limit: Optional[int] = None,
-    ) -> List[ApplicationInfo]:
+    ) -> List[ApplicationInfoEnriched]:
         """
         Get a list of all applications.
 
@@ -225,9 +228,16 @@ class SparkRestClient:
             params["limit"] = limit
 
         data = self._get("applications", params)
-        return self._parse_model_list(data, ApplicationInfo)
+        apps = self._parse_model_list(data, ApplicationInfo)
+        return [
+            ApplicationInfoEnriched(
+                **app_info.model_dump(),
+                sparkHistoryServerUrl=get_spark_history_server_url_for_user(app_info.id)
+            )
+            for app_info in apps
+        ]
 
-    def get_application(self, app_id: str) -> ApplicationInfo:
+    def get_application(self, app_id: str) -> ApplicationInfoEnriched:
         """
         Get information about a specific application.
 
@@ -238,7 +248,13 @@ class SparkRestClient:
             ApplicationInfo object
         """
         data = self._get(f"applications/{app_id}")
-        return self._parse_model(data, ApplicationInfo)
+        app_info = self._parse_model(data, ApplicationInfo)
+
+        return ApplicationInfoEnriched(
+            **app_info.model_dump(),
+            sparkHistoryServerUrl=get_spark_history_server_url_for_user(app_info.id)
+        )
+
 
     def get_application_attempt(
         self, app_id: str, attempt_id: str

@@ -13,6 +13,7 @@ from spark_history_mcp.models.mcp_types import (
 )
 from spark_history_mcp.models.spark_types import (
     ApplicationInfo,
+    ApplicationInfoEnriched,
     ExecutionData,
     JobData,
     JobExecutionStatus,
@@ -22,14 +23,13 @@ from spark_history_mcp.models.spark_types import (
     TaskMetricDistributions,
 )
 from ..common.datadog import Datadog, LogDD, EventDD
+from ..common.utils import DATACENTER
 from ..common.yoshi import Yoshi
 from ..common.s3_client import index_spark_event_logs
 
 from ..utils.utils import parallel_execute
 
 logger = logging.getLogger(__name__)
-
-DATACENTER = os.environ.get("DD_DATACENTER", "us1.staging.dog")
 
 
 def get_client_or_default(
@@ -140,7 +140,7 @@ def list_applications(
 
 
 @mcp.tool()
-def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInfo:
+def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInfoEnriched:
     """
     Get detailed information about a specific Spark application.
 
