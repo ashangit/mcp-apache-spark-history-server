@@ -12,6 +12,7 @@ from spark_history_mcp.models.mcp_types import (
 )
 from spark_history_mcp.models.spark_types import (
     ApplicationInfo,
+    ApplicationInfoEnriched,
     ExecutionData,
     JobData,
     JobExecutionStatus,
@@ -137,7 +138,7 @@ def list_applications(
         return all_apps
 
 @mcp.tool()
-def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInfo:
+def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInfoEnriched:
     """
     Get detailed information about a specific Spark application.
 

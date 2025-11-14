@@ -106,6 +106,10 @@ class ApplicationInfo(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, populate_by_name=True)
 
 
+class ApplicationInfoEnriched(ApplicationInfo):
+    sparkHistoryServerUrl: str
+
+
 class ApplicationAttemptInfo(BaseModel):
     attempt_id: Optional[str] = Field(None, alias="attemptId")
     start_time: Optional[datetime] = Field(None, alias="startTime")
