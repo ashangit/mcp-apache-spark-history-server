@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 def index_spark_event_logs(app_id: str):
-    logger.info(f"Indexing spark event logs for app_id {app_id}")
     s3_client = S3Client(datacenter=DD_DATACENTER)
     if not s3_client.is_spark_event_logs_already_indexed(app_id):
         try:

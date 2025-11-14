@@ -1,7 +1,12 @@
-from datetime import datetime
 import heapq
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+from yoshi_client.domains.data_eng_infra.shared.libs.py.yoshi_client import (
+    JobType,
+    Status,
+)
 
 from spark_history_mcp.core.app import mcp
 from spark_history_mcp.models.mcp_types import (
@@ -19,11 +24,11 @@ from spark_history_mcp.models.spark_types import (
     StageStatus,
     TaskMetricDistributions,
 )
-from ..common.datadog import Datadog, LogDD, EventDD
-from ..common.variable import DD_DATACENTER
-from ..common.yoshi import Yoshi, JobEnriched
-from ..common.s3_client import index_spark_event_logs
 
+from ..common.datadog import Datadog, EventDD, LogDD
+from ..common.s3_client import index_spark_event_logs
+from ..common.variable import DD_DATACENTER
+from ..common.yoshi import JobEnriched, Yoshi
 from ..utils.utils import parallel_execute
 
 logger = logging.getLogger(__name__)
@@ -134,6 +139,7 @@ def list_applications(
                 continue  # Skip unreachable servers
 
         return all_apps
+
 
 @mcp.tool()
 def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInfoEnriched:
@@ -512,7 +518,6 @@ def compare_job_environments(
     """
     index_spark_event_logs(app_id1)
     index_spark_event_logs(app_id2)
-
 
     ctx = mcp.get_context()
     client1 = get_client_or_default(ctx, server, app_id1)
@@ -1221,7 +1226,7 @@ def get_resource_usage_timeline(
     ctx = mcp.get_context()
     client = get_client_or_default(ctx, server, app_id)
 
-   # Get application info
+    # Get application info
     app = client.get_application(app_id)
 
     # Get all executors
@@ -1340,6 +1345,78 @@ def get_resource_usage_timeline(
 
 
 @mcp.tool()
+def list_yoshi_obs(
+    statuses: Optional[list[Status]] = None,
+    since: Optional[datetime] = None,
+    before: Optional[datetime] = None,
+    filter_subproject_name: Optional[list[str]] = None,
+    filter_class_name: Optional[list[str]] = None,
+    filter_team_name: Optional[list[str]] = None,
+    filter_human_username: Optional[list[str]] = None,
+    filter_role: Optional[list[str]] = None,
+    filter_pipeline_job_id: Optional[list[str]] = None,
+    filter_job_type: Optional[list[JobType]] = None,
+    limits: Optional[int] = None,
+) -> List[str]:
+    """
+    List Yoshi/Mortar jobs with optional filtering criteria.
+
+    Retrieves a list of jobs from the Yoshi/Mortar orchestration system based on
+    various filter criteria including status, time range, ownership, and metadata.
+
+    Args:
+        statuses: Optional list of job statuses to filter by (
+                PENDING = 'pending'
+                WAITING = 'waiting'
+                WAITING_FOR_JOB_PLATFORM = 'waiting_for_job_platform'
+                WAITING_FOR_LOCK = 'waiting_for_lock'
+                ADMITTED = 'admitted'
+                RUNNING = 'running'
+                UNDER_REMEDIATION = 'under_remediation'
+                RELAUNCHED = 'relaunched'
+                STOPPING = 'stopping'
+                SUCCESS = 'success'
+                STOPPED = 'stopped'
+                EXECUTION_ERROR = 'execution_error'
+            )
+        since: Optional earliest job start time to include (inclusive)
+        before: Optional latest job start time to include (exclusive)
+        filter_subproject_name: Optional list of subproject names to filter by
+        filter_class_name: Optional list of class names to filter by
+        filter_team_name: Optional list of team names to filter by
+        filter_human_username: Optional list of usernames to filter by (job owners)
+        filter_role: Optional list of roles/mortar users to filter by
+        filter_pipeline_job_id: Optional list of luigi pipeline job IDs to filter by
+        filter_job_type: Optional list of job types to filter by(
+                SPARK = 'spark'
+                PYSPARK = 'pyspark'
+                RAY = 'ray'
+                KUBERNETES = 'kubernetes'
+            )
+
+    Returns:
+        List[Job]: List of Job objects matching the filter criteria
+
+    Note:
+        All filter parameters use AND logic when combined. Jobs must match all
+        provided filters to be included in the results.
+    """
+    return Yoshi(DD_DATACENTER).list_jobs(
+        statuses,
+        since,
+        before,
+        filter_subproject_name,
+        filter_class_name,
+        filter_team_name,
+        filter_human_username,
+        filter_role,
+        filter_pipeline_job_id,
+        filter_job_type,
+        limits,
+    )
+
+
+@mcp.tool()
 def get_job_definition(job_id: str) -> JobEnriched:
     """
     Get job definition about a mortar/yoshi job.
@@ -1394,6 +1471,7 @@ def get_spark_job_logs(
         _from=start_time,
         to=end_time,
     )
+
 
 @mcp.tool()
 def get_operator_logs(
@@ -1512,6 +1590,7 @@ def get_admission_logs(
         _from=start_time,
         to=end_time,
     )
+
 
 @mcp.tool()
 def list_events(
