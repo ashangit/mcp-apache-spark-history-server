@@ -69,9 +69,23 @@ def get_client_or_default(
     if default_client:
         return default_client
 
-    raise ValueError(
-        "No Spark client found. Please specify a valid server name or set a default server."
+    available_servers = list(clients.keys()) if clients else []
+    error_msg = "No Spark client found.\n\n"
+    
+    if available_servers:
+        error_msg += f"Available servers: {available_servers}\n"
+        error_msg += f"Specify one using the 'server' parameter.\n\n"
+    else:
+        error_msg += "No servers configured.\n\n"
+    
+    error_msg += (
+        "Troubleshooting:\n"
+        "1. Ensure Spark History Server is running and accessible\n"
+        "2. Check your configuration file for valid server definitions\n"
+        "3. Verify network connectivity to the history server"
     )
+    
+    raise ValueError(error_msg)
 
 
 @mcp.tool()

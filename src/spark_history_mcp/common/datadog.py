@@ -26,6 +26,13 @@ DATADOG_SECRET_KEYS = f"k8s/{POD_NAMESPACE}/{POD_SERVICE_ACCOUNT}/datadog"
 
 
 class LogDD(BaseModel):
+    """
+    Datadog log entry model representing a single log record.
+    
+    This model captures the essential information from a Datadog log entry,
+    including timing, content, severity, and source information.
+    """
+    
     timestamp: datetime = Field(description="Timestamp when the log has been emitted")
     message: str = Field(description="Log message")
     status: str = Field(description="Log level")
@@ -45,33 +52,40 @@ class EventDD(BaseModel):
 
 class SingletonMeta(type):
     """
-    This is a thread-safe implementation of Singleton.
+    Thread-safe Singleton metaclass.
+    
+    This metaclass ensures that only one instance of a class can exist at a time,
+    even in multi-threaded environments. The first thread to create an instance
+    acquires a lock, and subsequent calls return the existing instance.
+    
+    Usage:
+        class MyClass(metaclass=SingletonMeta):
+            pass
     """
 
     _instances = {}
 
     _lock: Lock = Lock()
-    """
-    We now have a lock object that will be used to synchronize threads during
-    first access to the Singleton.
-    """
 
     def __call__(cls, *args, **kwargs):
         """
-        Possible changes to the value of the `__init__` argument do not affect
-        the returned instance.
+        Control the instantiation process to ensure only one instance exists.
+        
+        This method is called when you call the class (e.g., MyClass()). It uses
+        a lock to ensure thread-safety during instance creation.
+        
+        Args:
+            *args: Positional arguments to pass to __init__
+            **kwargs: Keyword arguments to pass to __init__
+            
+        Returns:
+            The singleton instance of the class
+            
+        Note:
+            Changes to __init__ arguments after the first instantiation
+            do not affect the returned instance.
         """
-        # Now, imagine that the program has just been launched. Since there's no
-        # Singleton instance yet, multiple threads can simultaneously pass the
-        # previous conditional and reach this point almost at the same time. The
-        # first of them will acquire lock and will proceed further, while the
-        # rest will wait here.
         with cls._lock:
-            # The first thread to acquire the lock, reaches this conditional,
-            # goes inside and creates the Singleton instance. Once it leaves the
-            # lock block, a thread that might have been waiting for the lock
-            # release may then enter this section. But since the Singleton field
-            # is already initialized, the thread won't create a new object.
             if cls not in cls._instances:
                 instance = super().__call__(*args, **kwargs)
                 cls._instances[cls] = instance
@@ -79,10 +93,48 @@ class SingletonMeta(type):
 
 
 class Datadog(metaclass=SingletonMeta):
+    """
+    Singleton client for interacting with the Datadog API.
+    
+    This class provides a unified interface for querying Datadog logs. It uses
+    the Singleton pattern to ensure API credentials are loaded once and reused
+    across the application. Credentials are retrieved from Vault using the
+    service account context.
+    
+    Attributes:
+        LIMIT_PER_QUERY_LOGS: Maximum number of logs to fetch per API request (1000)
+        MAX_RETURN_LOGS: Maximum total number of logs to return (100000)
+        configuration: Datadog API client configuration with auth credentials
+        
+    Example:
+        >>> dd = Datadog()
+        >>> logs = dd.get_logs(
+        ...     index_names=["main"],
+        ...     query="service:spark status:error",
+        ...     _from=datetime(2024, 1, 1),
+        ...     to=datetime(2024, 1, 2)
+        ... )
+    """
+    
     LIMIT_PER_QUERY_LOGS = 1000
     MAX_RETURN_LOGS = 100000
 
     def __init__(self):
+        """
+        Initialize the Datadog client with API credentials from Vault.
+        
+        Retrieves the Datadog API key and application key from Vault using
+        the path determined by the pod's namespace and service account. These
+        credentials are used to configure the Datadog API client with retry
+        logic enabled.
+        
+        Raises:
+            Exception: If credentials cannot be retrieved from Vault
+            
+        Note:
+            This is only called once due to the Singleton pattern, even if
+            multiple Datadog() instances are requested.
+        """
         vault_api = VaultApi()
 
         logger.info(
@@ -112,6 +164,42 @@ class Datadog(metaclass=SingletonMeta):
     def list_logs(
         self, index_names: list[str], query: str, _from: datetime, to: datetime
     ) -> list[LogDD]:
+        """
+        Query Datadog logs within a specified time range.
+        
+        Retrieves logs from Datadog using the Logs API with automatic pagination.
+        Results are filtered by the provided query string and time range. The method
+        handles pagination automatically and stops when MAX_RETURN_LOGS is reached.
+        
+        Args:
+            index_names: List of Datadog log index names to query (e.g., ["main", "prod"])
+            query: Datadog query string using their search syntax
+                   (e.g., "service:spark status:error host:prod-*")
+            _from: Start datetime for the log search (inclusive)
+            to: End datetime for the log search (inclusive)
+            
+        Returns:
+            List of LogDD objects containing parsed log entries, sorted by timestamp
+            ascending. Returns up to MAX_RETURN_LOGS (100,000) logs.
+            
+        Raises:
+            Exception: If the Datadog API request fails or credentials are invalid
+            
+        Example:
+            >>> dd = Datadog()
+            >>> logs = dd.get_logs(
+            ...     index_names=["main"],
+            ...     query="service:spark-driver @spark.app_id:app-20240101-001",
+            ...     _from=datetime(2024, 1, 1, 0, 0),
+            ...     to=datetime(2024, 1, 1, 23, 59)
+            ... )
+            >>> print(f"Found {len(logs)} log entries")
+            
+        Note:
+            - Logs are fetched in batches of LIMIT_PER_QUERY_LOGS (1000)
+            - Pagination stops when MAX_RETURN_LOGS (100,000) is reached
+            - If a pod_name tag is not found, the method will raise an exception
+        """
         with ApiClient(self.configuration) as api_client:
             logs_api_instance = LogsApi(api_client)
             request = LogsListRequest(

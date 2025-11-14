@@ -352,6 +352,31 @@ SHS_SERVERS_*_INCLUDE_PLAN_DESCRIPTION - Whether to include SQL execution plans 
 ✅ Highlight configuration differences
 ```
 
+## 📚 AI Assistant Documentation
+
+Comprehensive guides for AI assistants (like Claude) to effectively use these tools:
+
+| Guide | Purpose | When to Use |
+|-------|---------|-------------|
+| **[AI Assistant Guide](AI_ASSISTANT_GUIDE.md)** | Quick reference for AI assistants | Overview and best practices |
+| **[Troubleshooting Guide](TROUBLESHOOTING_GUIDE.md)** | Common failure patterns and solutions | Investigating issues |
+| **[Workflow Examples](WORKFLOW_EXAMPLES.md)** | Step-by-step investigation scenarios | Learning by example |
+
+**Key Features:**
+- ✅ Enhanced tool docstrings with use cases and failure scenarios
+- ✅ Contextual error messages with troubleshooting steps
+- ✅ Investigation workflows for common scenarios
+- ✅ Metric interpretation guidelines
+- ✅ Best practices for AI-driven analysis
+
+**Example Enhanced Documentation:**
+Each tool now includes:
+- Common use cases and when to use it
+- Next steps based on results
+- Failure scenarios and recovery strategies
+- Example usage patterns
+- Key metrics explained with thresholds
+
 ## 🤝 Contributing
 
 Check [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines on contributions
