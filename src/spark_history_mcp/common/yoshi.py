@@ -83,7 +83,7 @@ class Yoshi:
                     filter_role=filter_role,
                     filter_pipeline_job_id=filter_pipeline_job_id,
                     _request_timeout=5,
-                    sort="request_timestamp:le",
+                    sort="request_timestamp:desc",
                 )
 
                 if response.jobs is not None:

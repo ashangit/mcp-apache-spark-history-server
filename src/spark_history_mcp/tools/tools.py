@@ -1345,7 +1345,7 @@ def get_resource_usage_timeline(
 
 
 @mcp.tool()
-def list_yoshi_obs(
+def list_yoshi_jobs(
     statuses: Optional[list[Status]] = None,
     since: Optional[datetime] = None,
     before: Optional[datetime] = None,
@@ -1393,6 +1393,7 @@ def list_yoshi_obs(
                 RAY = 'ray'
                 KUBERNETES = 'kubernetes'
             )
+        limits: Optional number of jobs to limit to (default: 0)
 
     Returns:
         List[Job]: List of Job objects matching the filter criteria
