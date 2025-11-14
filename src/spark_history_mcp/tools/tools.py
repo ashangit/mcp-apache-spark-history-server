@@ -3,8 +3,6 @@ import heapq
 import logging
 from typing import Any, Dict, List, Optional
 
-from yoshi_client.domains.data_eng_infra.shared.libs.py.yoshi_client import Job
-
 from spark_history_mcp.core.app import mcp
 from spark_history_mcp.models.mcp_types import (
     JobSummary,
@@ -23,7 +21,7 @@ from spark_history_mcp.models.spark_types import (
 )
 from ..common.datadog import Datadog, LogDD, EventDD
 from ..common.variable import DD_DATACENTER
-from ..common.yoshi import Yoshi
+from ..common.yoshi import Yoshi, JobEnriched
 from ..common.s3_client import index_spark_event_logs
 
 from ..utils.utils import parallel_execute
@@ -1342,7 +1340,7 @@ def get_resource_usage_timeline(
 
 
 @mcp.tool()
-def get_job_definition(job_id: str) -> Job:
+def get_job_definition(job_id: str) -> JobEnriched:
     """
     Get job definition about a mortar/yoshi job.
     The mortar/yoshi job contains the information of the spark app id
