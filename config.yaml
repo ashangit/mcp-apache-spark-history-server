@@ -37,7 +37,7 @@ servers:
 
 mcp:
   transports:
-    - streamable-http # streamable-http or stdio. you can only specify one right now.
+    - stdio # streamable-http or stdio. you can only specify one right now.
   port: "18888"
   debug: true
   address: localhost
