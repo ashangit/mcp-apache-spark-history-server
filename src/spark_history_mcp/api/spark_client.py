@@ -5,7 +5,6 @@ from urllib.parse import urljoin
 import requests
 from pydantic import BaseModel
 
-from spark_history_mcp.config.config import ServerConfig
 from spark_history_mcp.models.spark_types import (
     ApplicationAttemptInfo,
     ApplicationEnvironmentInfo,
@@ -36,37 +35,22 @@ class SparkRestClient:
     Python client for the Spark REST API.
     """
 
-    def __init__(self, server_config: ServerConfig):
+    def __init__(self, datacenter: str):
         """
         Initialize the Spark REST client.
 
         Args:
-            server_config: Configuration object
+            datacenter: datacenter
         """
-        self.config = server_config
-        self.base_url = self.config.url.rstrip("/") + "/api/v1"
+        self.datacenter = datacenter
+        self.base_url =  f"https://spark-history-server.{datacenter}/".rstrip("/") + "/api/v1"
         self.auth = None
         self.session = None
-        self.use_proxy = self.config.use_proxy
-        self.proxies = (
-            self.use_proxy
-            and {
-                "http": "socks5h://localhost:8157",
-                "https": "socks5h://localhost:8157",
-            }
-            or None
-        )
         self.pattern = re.compile(r"(.*?/applications/[^/]+/)(.+)")
 
         # Determine whether to verify SSL certificates and timeout
-        # Default to True for verify_ssl and 30 seconds for timeout if not specified
-        self.verify_ssl = self.config.verify_ssl
-        self.timeout = self.config.timeout
+        self.timeout = 30
 
-        # Set up authentication if provided
-        if self.config.auth:
-            if self.config.auth.username and self.config.auth.password:
-                self.auth = (self.config.auth.username, self.config.auth.password)
 
     def _make_request(
         self, request_url: str, params: Optional[Dict[str, Any]]
@@ -83,13 +67,6 @@ class SparkRestClient:
         """
         headers = {"Accept": "application/json"}
 
-        # Add token to headers if provided
-        if self.config.auth and self.config.auth.token:
-            headers["Authorization"] = f"Bearer {self.config.auth.token}"
-
-        # Use the verify_ssl setting for HTTPS requests
-        verify = self.verify_ssl
-
         # Use the session if available, otherwise use requests directly
         if self.session:
             # Add headers to the session
@@ -100,8 +77,6 @@ class SparkRestClient:
                 request_url,
                 params=params,
                 timeout=self.timeout,
-                verify=verify,
-                proxies=self.proxies,
             )
         else:
             response = requests.get(
@@ -110,8 +85,6 @@ class SparkRestClient:
                 headers=headers,
                 auth=self.auth,
                 timeout=self.timeout,
-                verify=verify,
-                proxies=self.proxies,
             )
         return response
 
@@ -232,7 +205,7 @@ class SparkRestClient:
         return [
             ApplicationInfoEnriched(
                 **app_info.model_dump(),
-                sparkHistoryServerUrl=get_spark_history_server_url_for_user(app_info.id)
+                sparkHistoryServerUrl=get_spark_history_server_url_for_user(app_info.id, self.datacenter)
             )
             for app_info in apps
         ]
@@ -252,7 +225,7 @@ class SparkRestClient:
 
         return ApplicationInfoEnriched(
             **app_info.model_dump(),
-            sparkHistoryServerUrl=get_spark_history_server_url_for_user(app_info.id)
+            sparkHistoryServerUrl=get_spark_history_server_url_for_user(app_info.id, self.datacenter)
         )
 
 
@@ -591,12 +564,9 @@ class SparkRestClient:
         data = self._get(f"applications/{app_id}/environment")
         return self._parse_model(data, ApplicationEnvironmentInfo)
 
-    def get_metrics_prometheus(self, app_id: str) -> str:
+    def get_metrics_prometheus(self) -> str:
         """
         Get Prometheus metrics for an application.
-
-        Args:
-            app_id: The application ID
 
         Returns:
             Prometheus metrics as a string
@@ -606,9 +576,9 @@ class SparkRestClient:
         )
 
         if self.session:
-            response = self.session.get(url, timeout=self.timeout, proxies=self.proxies)
+            response = self.session.get(url, timeout=self.timeout)
         else:
-            response = requests.get(url, timeout=self.timeout, proxies=self.proxies)
+            response = requests.get(url, timeout=self.timeout)
 
         response.raise_for_status()
         return response.text

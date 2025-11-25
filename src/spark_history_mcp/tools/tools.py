@@ -1,5 +1,6 @@
 import heapq
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -24,26 +25,23 @@ from spark_history_mcp.models.spark_types import (
     StageStatus,
     TaskMetricDistributions,
 )
+from ..api.spark_client import SparkRestClient
 
 from ..common.datadog import Datadog, EventDD, LogDD
-from ..common.s3_client import index_spark_event_logs
-from ..common.variable import DD_DATACENTER
+from ..common.mortar import Mortar
 from ..common.yoshi import JobEnriched, Yoshi
 from ..utils.utils import parallel_execute
 
 logger = logging.getLogger(__name__)
 
 
-def get_client_or_default(
-    ctx, server_name: Optional[str] = None, app_id: Optional[str] = None
-):
+def get_client_or_default(ctx, datacenter: str):
     """
     Get a client by server name, app discovery, or default client.
 
     Args:
         ctx: The MCP context
-        server_name: Optional server name
-        app_id: Optional app ID for discovery
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
 
     Returns:
         SparkRestClient: The requested client
@@ -51,46 +49,18 @@ def get_client_or_default(
     Raises:
         ValueError: If no client is found
     """
-    app_discovery = ctx.request_context.lifespan_context.app_discovery
-    default_client = ctx.request_context.lifespan_context.default_client
-
-    # If app_id provided, use discovery
-    if app_id and not server_name:
-        client, _ = app_discovery.get_client_for_app(app_id, server_name)
-        return client
-
     clients = ctx.request_context.lifespan_context.clients
 
-    if server_name:
-        client = clients.get(server_name)
-        if client:
-            return client
-
-    if default_client:
-        return default_client
-
-    available_servers = list(clients.keys()) if clients else []
-    error_msg = "No Spark client found.\n\n"
-    
-    if available_servers:
-        error_msg += f"Available servers: {available_servers}\n"
-        error_msg += f"Specify one using the 'server' parameter.\n\n"
-    else:
-        error_msg += "No servers configured.\n\n"
-    
-    error_msg += (
-        "Troubleshooting:\n"
-        "1. Ensure Spark History Server is running and accessible\n"
-        "2. Check your configuration file for valid server definitions\n"
-        "3. Verify network connectivity to the history server"
-    )
-    
-    raise ValueError(error_msg)
+    client = clients.get(datacenter)
+    if not client:
+        client = SparkRestClient(datacenter=datacenter)
+        clients[datacenter] = client
+    return client
 
 
 @mcp.tool()
 def list_applications(
-    server: Optional[str] = None,
+    datacenter: str,
     status: Optional[list[str]] = None,
     min_date: Optional[str] = None,
     max_date: Optional[str] = None,
@@ -102,7 +72,7 @@ def list_applications(
     Get a list of applications from the Spark History Server.
 
     Args:
-        server: Optional server name to use (uses default if not specified)
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         status: Optional list only applications in the chosen state: [completed|running]
         min_date: Optional earliest start date/time to list
         max_date: Optional latest start date/time to list
@@ -119,44 +89,19 @@ def list_applications(
     """
     ctx = mcp.get_context()
 
-    if server:
-        # Return from specific server
-        client = get_client_or_default(ctx, server)
-        return client.list_applications(
-            status=status,
-            min_date=min_date,
-            max_date=max_date,
-            min_end_date=min_end_date,
-            max_end_date=max_end_date,
-            limit=limit,
-        )
-    else:
-        # Return from all servers
-        all_apps = []
-        clients = ctx.request_context.lifespan_context.clients
-
-        for server_name, client in clients.items():
-            try:
-                apps = client.list_applications(
-                    status=status,
-                    min_date=min_date,
-                    max_date=max_date,
-                    min_end_date=min_end_date,
-                    max_end_date=max_end_date,
-                    limit=limit,
-                )
-                all_apps.extend(apps)
-            except Exception as e:
-                logger.warning(
-                    f"Failed to get applications from server '{server_name}': {e}"
-                )
-                continue  # Skip unreachable servers
-
-        return all_apps
+    client = get_client_or_default(ctx, datacenter)
+    return client.list_applications(
+        status=status,
+        min_date=min_date,
+        max_date=max_date,
+        min_end_date=min_end_date,
+        max_end_date=max_end_date,
+        limit=limit,
+    )
 
 
 @mcp.tool()
-def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInfoEnriched:
+def get_application(datacenter: str, app_id: str) -> ApplicationInfoEnriched:
     """
     Get detailed information about a specific Spark application.
 
@@ -164,39 +109,37 @@ def get_application(app_id: str, server: Optional[str] = None) -> ApplicationInf
     status, resource usage, duration, and attempt details.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID (Must start by spark-)
-        server: Optional server name to use (uses default if not specified)
 
     Returns:
         ApplicationInfo object containing application details
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     return client.get_application(app_id)
 
 
 @mcp.tool()
-def list_jobs(
-    app_id: str, server: Optional[str] = None, status: Optional[list[str]] = None
-) -> list:
+def list_jobs(datacenter: str, app_id: str, status: Optional[list[str]] = None) -> list:
     """
     Get a list of all jobs for a Spark application.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
         status: Optional list of job status values to filter by
 
     Returns:
         List of JobData objects for the application
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     # Convert string status values to JobExecutionStatus enum if provided
     job_statuses = None
@@ -208,8 +151,8 @@ def list_jobs(
 
 @mcp.tool()
 def list_slowest_jobs(
+    datacenter: str,
     app_id: str,
-    server: Optional[str] = None,
     include_running: bool = False,
     n: int = 5,
 ) -> List[JobData]:
@@ -219,18 +162,18 @@ def list_slowest_jobs(
     Retrieves all jobs for the application and returns the ones with the longest duration.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
         include_running: Whether to include running jobs in the search
         n: Number of slowest jobs to return (default: 5)
 
     Returns:
         List of JobData objects for the slowest jobs, or empty list if no jobs found
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     # Get all jobs
     jobs = client.list_jobs(app_id=app_id)
@@ -255,8 +198,8 @@ def list_slowest_jobs(
 
 @mcp.tool()
 def list_stages(
+    datacenter: str,
     app_id: str,
-    server: Optional[str] = None,
     status: Optional[list[str]] = None,
     with_summaries: bool = False,
 ) -> list:
@@ -267,18 +210,18 @@ def list_stages(
     by status and include additional details and summary metrics.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
         status: Optional list of stage status values to filter by
         with_summaries: Whether to include summary metrics in the response
 
     Returns:
         List of StageData objects for the application
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     # Convert string status values to StageStatus enum if provided
     stage_statuses = None
@@ -294,8 +237,8 @@ def list_stages(
 
 @mcp.tool()
 def list_slowest_stages(
+    datacenter: str,
     app_id: str,
-    server: Optional[str] = None,
     include_running: bool = False,
     n: int = 5,
 ) -> List[StageData]:
@@ -305,18 +248,18 @@ def list_slowest_stages(
     Retrieves all stages for the application and returns the ones with the longest duration.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
         include_running: Whether to include running stages in the search
         n: Number of slowest stages to return (default: 5)
 
     Returns:
         List of StageData objects for the slowest stages, or empty list if no stages found
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     stages = client.list_stages(app_id=app_id)
 
@@ -339,29 +282,29 @@ def list_slowest_stages(
 
 @mcp.tool()
 def get_stage(
+    datacenter: str,
     app_id: str,
     stage_id: int,
     attempt_id: Optional[int] = None,
-    server: Optional[str] = None,
     with_summaries: bool = False,
 ) -> StageData:
     """
     Get information about a specific stage.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
         stage_id: The stage ID
         attempt_id: Optional stage attempt ID (if not provided, returns the latest attempt)
-        server: Optional server name to use (uses default if not specified)
         with_summaries: Whether to include summary metrics
 
     Returns:
         StageData object containing stage information
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     if attempt_id is not None:
         # Get specific attempt
@@ -406,7 +349,7 @@ def get_stage(
 
 
 @mcp.tool()
-def get_environment(app_id: str, server: Optional[str] = None):
+def get_environment(datacenter: str, app_id: str):
     """
     Get the comprehensive Spark runtime configuration for a Spark application.
 
@@ -414,24 +357,22 @@ def get_environment(app_id: str, server: Optional[str] = None):
     classpath entries, and environment variables.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
 
     Returns:
         ApplicationEnvironmentInfo object containing environment details
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     return client.get_environment(app_id=app_id)
 
 
 @mcp.tool()
-def list_executors(
-    app_id: str, server: Optional[str] = None, include_inactive: bool = False
-):
+def list_executors(datacenter: str, app_id: str, include_inactive: bool = False):
     """
     Get executor information for a Spark application.
 
@@ -439,17 +380,17 @@ def list_executors(
     with their resource allocation, task statistics, and performance metrics.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
         include_inactive: Whether to include inactive executors (default: False)
 
     Returns:
         List of ExecutorSummary objects containing executor information
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     if include_inactive:
         return client.list_all_executors(app_id=app_id)
@@ -458,7 +399,7 @@ def list_executors(
 
 
 @mcp.tool()
-def get_executor(app_id: str, executor_id: str, server: Optional[str] = None):
+def get_executor(datacenter: str, app_id: str, executor_id: str):
     """
     Get information about a specific executor.
 
@@ -466,17 +407,17 @@ def get_executor(app_id: str, executor_id: str, server: Optional[str] = None):
     task statistics, memory usage, and performance metrics.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
         executor_id: The executor ID
-        server: Optional server name to use (uses default if not specified)
 
     Returns:
         ExecutorSummary object containing executor details or None if not found
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     # Get all executors and find the one with matching ID
     executors = client.list_all_executors(app_id=app_id)
@@ -489,7 +430,7 @@ def get_executor(app_id: str, executor_id: str, server: Optional[str] = None):
 
 
 @mcp.tool()
-def get_executor_summary(app_id: str, server: Optional[str] = None):
+def get_executor_summary(datacenter: str, app_id: str):
     """
     Aggregates metrics across all executors for a Spark application.
 
@@ -497,16 +438,16 @@ def get_executor_summary(app_id: str, server: Optional[str] = None):
     including memory usage, disk usage, task counts, and performance metrics.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
 
     Returns:
         Dictionary containing aggregated executor metrics
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     executors = client.list_all_executors(app_id=app_id)
     return _calculate_executor_metrics(executors)
@@ -514,7 +455,7 @@ def get_executor_summary(app_id: str, server: Optional[str] = None):
 
 @mcp.tool()
 def compare_job_environments(
-    app_id1: str, app_id2: str, server: Optional[str] = None
+    datacenter: str, app_id1: str, app_id2: str
 ) -> Dict[str, Any]:
     """
     Compare Spark environment configurations between two jobs.
@@ -523,19 +464,19 @@ def compare_job_environments(
     and other configuration parameters between two Spark applications.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id1: First Spark application ID
         app_id2: Second Spark application ID
-        server: Optional server name to use (uses default if not specified)
 
     Returns:
         Dictionary containing configuration differences and similarities
     """
-    index_spark_event_logs(app_id1)
-    index_spark_event_logs(app_id2)
+    Mortar(datacenter).copy_logs(app_id1)
+    Mortar(datacenter).copy_logs(app_id1)
 
     ctx = mcp.get_context()
-    client1 = get_client_or_default(ctx, server, app_id1)
-    client2 = get_client_or_default(ctx, server, app_id2)
+    client1 = get_client_or_default(ctx, datacenter)
+    client2 = get_client_or_default(ctx, datacenter)
 
     env1 = client1.get_environment(app_id=app_id1)
     env2 = client2.get_environment(app_id=app_id2)
@@ -632,7 +573,7 @@ def _calc_executor_summary_from_client(client, app_id: str):
 
 @mcp.tool()
 def compare_job_performance(
-    app_id1: str, app_id2: str, server: Optional[str] = None
+    datacenter: str, app_id1: str, app_id2: str
 ) -> Dict[str, Any]:
     """
     Compare performance metrics between two Spark jobs.
@@ -641,19 +582,19 @@ def compare_job_performance(
     performance indicators to identify differences between jobs.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id1: First Spark application ID
         app_id2: Second Spark application ID
-        server: Optional server name to use (uses default if not specified)
 
     Returns:
         Dictionary containing detailed performance comparison
     """
-    index_spark_event_logs(app_id1)
-    index_spark_event_logs(app_id2)
+    Mortar(datacenter).copy_logs(app_id1)
+    Mortar(datacenter).copy_logs(app_id1)
 
     ctx = mcp.get_context()
-    client1 = get_client_or_default(ctx, server, app_id1)
-    client2 = get_client_or_default(ctx, server, app_id2)
+    client1 = get_client_or_default(ctx, datacenter)
+    client2 = get_client_or_default(ctx, datacenter)
 
     # Define API calls for parallel execution
     api_calls = [
@@ -789,11 +730,11 @@ def compare_job_performance(
 
 @mcp.tool()
 def compare_sql_execution_plans(
+    datacenter: str,
     app_id1: str,
     app_id2: str,
     execution_id1: Optional[int] = None,
     execution_id2: Optional[int] = None,
-    server: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Compare SQL execution plans between two Spark jobs.
@@ -802,21 +743,21 @@ def compare_sql_execution_plans(
     and compares execution metrics between SQL queries.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id1: First Spark application ID
         app_id2: Second Spark application ID
         execution_id1: Optional specific execution ID for first app (uses longest if not specified)
         execution_id2: Optional specific execution ID for second app (uses longest if not specified)
-        server: Optional server name to use (uses default if not specified)
 
     Returns:
         Dictionary containing SQL execution plan comparison
     """
-    index_spark_event_logs(app_id1)
-    index_spark_event_logs(app_id2)
+    Mortar(datacenter).copy_logs(app_id1)
+    Mortar(datacenter).copy_logs(app_id1)
 
     ctx = mcp.get_context()
-    client1 = get_client_or_default(ctx, server, app_id1)
-    client2 = get_client_or_default(ctx, server, app_id2)
+    client1 = get_client_or_default(ctx, datacenter)
+    client2 = get_client_or_default(ctx, datacenter)
 
     # Get SQL executions for both applications
     sql_execs1 = client1.get_sql_list(
@@ -913,10 +854,10 @@ def compare_sql_execution_plans(
 
 @mcp.tool()
 def get_stage_task_summary(
+    datacenter: str,
     app_id: str,
     stage_id: int,
     attempt_id: int = 0,
-    server: Optional[str] = None,
     quantiles: str = "0.05,0.25,0.5,0.75,0.95",
 ) -> TaskMetricDistributions:
     """
@@ -926,19 +867,19 @@ def get_stage_task_summary(
     execution times, memory usage, I/O metrics, and shuffle metrics.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
         stage_id: The stage ID
         attempt_id: The stage attempt ID (default: 0)
-        server: Optional server name to use (uses default if not specified)
         quantiles: Comma-separated list of quantiles to use for summary metrics
 
     Returns:
         TaskMetricDistributions object containing metric distributions
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     return client.get_stage_task_summary(
         app_id=app_id, stage_id=stage_id, attempt_id=attempt_id, quantiles=quantiles
@@ -972,8 +913,8 @@ def truncate_plan_description(plan_desc: str, max_length: int) -> str:
 
 @mcp.tool()
 def list_slowest_sql_queries(
+    datacenter: str,
     app_id: str,
-    server: Optional[str] = None,
     attempt_id: Optional[str] = None,
     top_n: int = 1,
     page_size: int = 100,
@@ -985,8 +926,8 @@ def list_slowest_sql_queries(
     Get the N slowest SQL queries for a Spark application.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
         attempt_id: Optional attempt ID
         top_n: Number of slowest queries to return (default: 1)
         page_size: Number of executions to fetch per page (default: 100)
@@ -997,10 +938,10 @@ def list_slowest_sql_queries(
     Returns:
         List of SqlQuerySummary objects for the slowest queries
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     # Config takes priority: if config is set (True/False), use it; otherwise default to True
     if client.config.include_plan_description is not None:
@@ -1075,9 +1016,7 @@ def list_slowest_sql_queries(
 
 
 @mcp.tool()
-def get_job_bottlenecks(
-    app_id: str, server: Optional[str] = None, top_n: int = 5
-) -> Dict[str, Any]:
+def get_job_bottlenecks(datacenter: str, app_id: str, top_n: int = 5) -> Dict[str, Any]:
     """
     Identify performance bottlenecks in a Spark job.
 
@@ -1085,26 +1024,26 @@ def get_job_bottlenecks(
     operations and resource-intensive components.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
         top_n: Number of top bottlenecks to return
 
     Returns:
         Dictionary containing identified bottlenecks and recommendations
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     # Get slowest stages
-    slowest_stages = list_slowest_stages(app_id, server, False, top_n)
+    slowest_stages = list_slowest_stages(datacenter, app_id, False, top_n)
 
     # Get slowest jobs
-    slowest_jobs = list_slowest_jobs(app_id, server, False, top_n)
+    slowest_jobs = list_slowest_jobs(datacenter, app_id, False, top_n)
 
     # Get executor summary
-    exec_summary = get_executor_summary(app_id, server)
+    exec_summary = get_executor_summary(datacenter, app_id)
 
     all_stages = client.list_stages(app_id=app_id)
 
@@ -1220,7 +1159,7 @@ def get_job_bottlenecks(
 
 @mcp.tool()
 def get_resource_usage_timeline(
-    app_id: str, server: Optional[str] = None
+    datacenter: str, app_id: str, top_n: int = 5
 ) -> Dict[str, Any]:
     """
     Get resource usage timeline for a Spark application.
@@ -1229,16 +1168,16 @@ def get_resource_usage_timeline(
     including executor additions/removals and stage execution overlap.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         app_id: The Spark application ID
-        server: Optional server name to use (uses default if not specified)
 
     Returns:
         Dictionary containing timeline of resource usage
     """
-    index_spark_event_logs(app_id)
+    Mortar(datacenter).copy_logs(app_id)
 
     ctx = mcp.get_context()
-    client = get_client_or_default(ctx, server, app_id)
+    client = get_client_or_default(ctx, datacenter)
 
     # Get application info
     app = client.get_application(app_id)
@@ -1360,6 +1299,7 @@ def get_resource_usage_timeline(
 
 @mcp.tool()
 def list_yoshi_jobs(
+    datacenter: str,
     statuses: Optional[list[Status]] = None,
     since: Optional[datetime] = None,
     before: Optional[datetime] = None,
@@ -1379,6 +1319,7 @@ def list_yoshi_jobs(
     various filter criteria including status, time range, ownership, and metadata.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         statuses: Optional list of job statuses to filter by (
                 PENDING = 'pending'
                 WAITING = 'waiting'
@@ -1416,7 +1357,7 @@ def list_yoshi_jobs(
         All filter parameters use AND logic when combined. Jobs must match all
         provided filters to be included in the results.
     """
-    return Yoshi(DD_DATACENTER).list_jobs(
+    return Yoshi(datacenter).list_jobs(
         statuses,
         since,
         before,
@@ -1432,23 +1373,30 @@ def list_yoshi_jobs(
 
 
 @mcp.tool()
-def get_job_definition(job_id: str) -> JobEnriched:
+def get_job_definition(datacenter: str, job_id: str) -> JobEnriched|dict:
     """
     Get job definition about a mortar/yoshi job.
     The mortar/yoshi job contains the information of the spark app id
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         job_id: Job identifier
 
     Returns:
         Job: Job definition
     """
-    return Yoshi(DD_DATACENTER).get_job_definition(job_id)
+    try:
+        uuid.UUID(str(job_id), version=4)
+        return Yoshi(datacenter).get_job_definition(job_id)
+    except (ValueError, AttributeError):
+         return Mortar(datacenter).get_job_definition(job_id)
+
 
 
 # TODO see to add pagination on mcp
 @mcp.tool()
 def get_spark_job_logs(
+    datacenter: str,
     job_id: str,
     retry_attempt: int,
     start_time: datetime,
@@ -1464,6 +1412,7 @@ def get_spark_job_logs(
     Can be used to get logs in error or warn status of a job to investigate the root cause of the issue
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         job_id: The mortar/yoshi job ID
         retry_attempt: The retry attempt number of the mortar/yoshi job
         start_time: Start time of the mortar/yoshi job
@@ -1476,11 +1425,11 @@ def get_spark_job_logs(
     if end_time is None:
         end_time = datetime.now()
 
-    query = f"service:emr-spark-errors spark_job_id:{job_id} retry_attempt:{retry_attempt} -@source:init_script"
+    query = f"datacenter:{datacenter} service:emr-spark-errors spark_job_id:{job_id} retry_attempt:{retry_attempt} -@source:init_script"
     if status is not None:
         query += f" status:{status}"
 
-    return Datadog().list_logs(
+    return Datadog(datacenter).list_logs(
         index_names=["data-eng", "dd-events"],
         query=query,
         _from=start_time,
@@ -1490,6 +1439,7 @@ def get_spark_job_logs(
 
 @mcp.tool()
 def get_operator_logs(
+    datacenter: str,
     job_id: str,
     start_time: datetime,
     status: Optional[str] = None,
@@ -1502,6 +1452,7 @@ def get_operator_logs(
     The logs come from the Spark operator service which handles job submissions and lifecycle.
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         job_id: The mortar/yoshi job ID to get logs for
         start_time: start time to get logs from
         status: Optional status to filter logs by (e.g. error, warn, info)
@@ -1513,11 +1464,11 @@ def get_operator_logs(
     if end_time is None:
         end_time = datetime.now()
 
-    query = f"service:spark-operator {job_id}"
+    query = f"datacenter:{datacenter} service:spark-operator {job_id}"
     if status is not None:
         query += f" status:{status}"
 
-    return Datadog().list_logs(
+    return Datadog(datacenter).list_logs(
         index_names=["mortar"],
         query=query,
         _from=start_time,
@@ -1527,6 +1478,7 @@ def get_operator_logs(
 
 @mcp.tool()
 def get_workflow_logs(
+    datacenter: str,
     workflow_id: str,
     start_time: datetime,
     status: Optional[str] = None,
@@ -1542,6 +1494,7 @@ def get_workflow_logs(
     This CR is then used by the spark operator to run the spark application
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         workflow_id: The workflow ID to get logs for
         start_time: start time to get logs from
         status: Optional status to filter logs by (e.g. error, warn, info)
@@ -1553,11 +1506,11 @@ def get_workflow_logs(
     if end_time is None:
         end_time = datetime.now()
 
-    query = f"service:spark_gateway-worker @WorkflowID:{workflow_id}"
+    query = f"datacenter:{datacenter} service:spark_gateway-worker @WorkflowID:{workflow_id}"
     if status is not None:
         query += f" status:{status}"
 
-    return Datadog().list_logs(
+    return Datadog(datacenter).list_logs(
         index_names=["mortar"],
         query=query,
         _from=start_time,
@@ -1567,6 +1520,7 @@ def get_workflow_logs(
 
 @mcp.tool()
 def get_admission_logs(
+    datacenter: str,
     job_id: str,
     app_id: str,
     start_time: datetime,
@@ -1583,6 +1537,7 @@ def get_admission_logs(
     be submitted
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         job_id: The job ID to get admission logs for
         app_id: The Spark application ID
         start_time: start time to get logs from
@@ -1595,11 +1550,11 @@ def get_admission_logs(
     if end_time is None:
         end_time = datetime.now()
 
-    query = f"(service:gateway-admission-controller {job_id}) OR (service:kueue-job-service spark_app_name:{app_id})"
+    query = f"datacenter:{datacenter} (service:gateway-admission-controller {job_id}) OR (service:kueue-job-service spark_app_name:{app_id})"
     if status is not None:
         query += f" status:{status}"
 
-    return Datadog().list_logs(
+    return Datadog(datacenter).list_logs(
         index_names=["mortar"],
         query=query,
         _from=start_time,
@@ -1609,6 +1564,7 @@ def get_admission_logs(
 
 @mcp.tool()
 def list_events(
+    datacenter: str,
     job_id: str,
     start_time: datetime,
     end_time: Optional[datetime] = None,
@@ -1623,6 +1579,7 @@ def list_events(
     or on oom kill faced by the pod
 
     Args:
+        datacenter: str Datacenter name where the job run (for ex. us1.staging.dog, us1.prod.dog, eu1.prod.dog...)
         job_id: The mortar/yoshi job ID to get events for
         start_time: Start time to get events from
         end_time: Optional end time to get events until (defaults to current time)
@@ -1633,6 +1590,6 @@ def list_events(
     if end_time is None:
         end_time = datetime.now()
 
-    query = f"pod_name:*{job_id}* "
+    query = f"datacenter:{datacenter} pod_name:*{job_id}* "
 
-    return Datadog().list_events(query, _from=start_time, to=end_time)
+    return Datadog(datacenter).list_events(query, _from=start_time, to=end_time)

@@ -8,12 +8,15 @@ import sys
 
 from spark_history_mcp.config.config import Config
 from spark_history_mcp.core import app
+import ddtrace
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+ddtrace.tracer.enabled = os.getenv("ENABLE_DDTRACE", False)
 
 
 def main():

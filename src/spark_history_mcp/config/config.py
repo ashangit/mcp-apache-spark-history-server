@@ -22,9 +22,7 @@ class ServerConfig(BaseSettings):
     """Server configuration for the Spark server."""
 
     url: Optional[str] = None
-    auth: AuthConfig = Field(default_factory=AuthConfig, exclude=True)
     default: bool = False
-    verify_ssl: bool = True
     emr_cluster_arn: Optional[str] = None  # EMR specific field
     use_proxy: bool = False
     timeout: int = 30  # HTTP request timeout in seconds
@@ -46,9 +44,6 @@ class McpConfig(BaseSettings):
 class Config(BaseSettings):
     """Configuration for the Spark client."""
 
-    servers: Dict[str, ServerConfig] = {
-        "local": ServerConfig(url="http://localhost:18080", default=True),
-    }
     mcp: Optional[McpConfig] = McpConfig(transports=["streamable-http"])
     model_config = SettingsConfigDict(
         env_prefix="SHS_",
